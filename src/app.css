@@ -1,3 +1,28 @@
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
+/* Add custom animation delay using Tailwind's @layer directive */
+@layer utilities {
+    .animate-ping {
+        animation: ping 1.5s infinite;
+    }
+    .animation-delay-200 {
+        animation-delay: 0.2s;
+    }
+    .animation-delay-400 {
+        animation-delay: 0.4s;
+    }
+}
+
+/* Define the ping animation */
+@keyframes ping {
+    0% {
+        opacity: 0;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+    }
+}

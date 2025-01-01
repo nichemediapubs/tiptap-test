@@ -1,22 +1,32 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import tippy from 'tippy.js';
+	import 'tippy.js/animations/perspective-subtle.css';
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
 	import Link from '@tiptap/extension-link';
 	import Placeholder from '@tiptap/extension-placeholder';
 	import BubbleMenu from '@tiptap/extension-bubble-menu';
 	import { Bold, Italic, List, ListOrdered, Link2 } from 'lucide-svelte';
+	import { AiInsertion } from '../../extensions/AiInsertion';
+	import { Markdown } from 'tiptap-markdown';
 
 	let element: HTMLElement;
 	let bubbleMenuElement: HTMLElement;
+	let aiOptionsElement: HTMLElement;
 	let editor: Editor;
 	let showLinkModal = false;
 	let linkUrl = '';
 	let linkSelection: Range | null = null;
 	let initialPosition: DOMRect | null = null;
 	let shouldUpdatePosition = true;
+	let showAiOptions = true;
 
 	export let content;
+
+	function tooltip(node, params) {
+		let tip = tippy(node, params);
+	}
 
 	onMount(() => {
 		editor = new Editor({
@@ -45,10 +55,15 @@
 				Placeholder.configure({
 					placeholder: 'Write something...'
 				}),
+				AiInsertion,
+				Markdown,
 				BubbleMenu.configure({
 					element: bubbleMenuElement,
 					tippyOptions: {
 						placement: 'bottom',
+						onCreate: (instance) => {
+							showAiOptions = true;
+						},
 						popperOptions: {
 							modifiers: [
 								{
@@ -89,6 +104,20 @@
 		}
 	});
 
+	const aiCommands = [
+		{ text: 'Continue Writing', command: 'continue' },
+		{ text: 'Shorten', command: 'shorten' },
+		{ text: 'Extend', command: 'extend' },
+		{ text: 'Fix', command: 'fix' },
+		{ text: 'Restructure', command: 'restructure' },
+		{ text: 'Blog Post', command: 'bloggify' },
+		{ text: 'Key Points', command: 'keypoints' },
+		{ text: 'Rephrase', command: 'rephrase' },
+		{ text: 'Emojify', command: 'emojify' },
+		{ text: 'Fix Spelling', command: 'fix_spelling' },
+		{ text: 'Summarize', command: 'summarize' }
+	];
+
 	const toggleFormat = (type) => {
 		shouldUpdatePosition = false;
 		switch (type) {
@@ -110,11 +139,116 @@
 			showLinkModal = false;
 		}
 	}
+
+	let isAiProcessing = false;
+	async function performAiOperation(command) {
+		try {
+			if (isAiProcessing) return;
+			isAiProcessing = true;
+
+			// Get selected text
+			const slice = editor.state.selection.content();
+			const text = editor.storage.markdown.serializer.serialize(slice.content);
+
+			// Make api call and fetch data in stream text
+			const response = await fetch(`http://localhost:3035/ai`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json' // This ensures the server knows to parse JSON
+				},
+				body: JSON.stringify({ text, command })
+			});
+
+			if (response.status !== 200) {
+				isAiProcessing = false;
+				alert('Error on AI processing');
+				return;
+			}
+
+			// Read the response body as a stream
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder(); // Decode the chunks
+			let streamText = '';
+			let start = editor.state.selection.from;
+			let end = editor.state.selection.$to.pos;
+
+			while (true) {
+				const { done, value } = await reader.read();
+
+				if (done) {
+					break; // Exit loop when the stream ends
+				}
+
+				// Decode and append the chunk to the displayed text
+				const chunk = decoder.decode(value, { stream: true });
+				streamText += chunk;
+
+				editor.chain().insertContentAt({ from: start, to: end }, streamText).run();
+				end = editor.state.selection.$to.pos;
+				editor.chain().setTextSelection({ from: start, to: end }).setMark('AiInsertion').run();
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+
+			// set focus to editor
+			editor
+				.chain()
+				.setTextSelection({ from: start, to: end })
+				.unsetMark('AiInsertion')
+				.focus(end)
+				.run();
+
+			isAiProcessing = false;
+		} catch (error) {
+			isAiProcessing = false;
+			alert('Error on AI processing');
+			console.log('error', error);
+		}
+	}
 </script>
 
+<div
+	class={`items mb-2 inline-flex w-full rounded border border-purple-500 bg-purple-200 px-2 transition-opacity duration-300 ${isAiProcessing ? 'opacity-100' : 'opacity-0'}`}
+>
+	Ai Processing
+	<div class="ml-2 flex items-center space-x-1">
+		<span class="dot animate-ping">.</span>
+		<span class="dot animation-delay-200 animate-ping">.</span>
+		<span class="dot animation-delay-400 animate-ping">.</span>
+	</div>
+</div>
 <div class="dt-editor relative min-h-[200px] max-w-4xl rounded-lg border border-gray-200">
+	<!-- <div class="rounded-md border bg-white"> -->
+	<div bind:this={aiOptionsElement} class="rounded-md border bg-white px-2 py-1">
+		<ul class="flex flex-col text-gray-900 dark:text-white">
+			{#each aiCommands as command}
+				<li class="px-2 py-1 hover:bg-gray-200">
+					<button
+						on:click={() => {
+							performAiOperation(command.command);
+						}}
+						class="w-full text-left">{command.text}</button
+					>
+				</li>
+			{/each}
+		</ul>
+	</div>
 	<div class:dt-bubble-menu={editor} bind:this={bubbleMenuElement}>
 		{#if editor}
+			<button
+				type="button"
+				class="menu-item relative"
+				use:tooltip={{
+					content: aiOptionsElement,
+					animation: 'perspective-subtle',
+					placement: 'bottom',
+					interactive: true,
+					offset: [0, 10]
+				}}
+			>
+				Ai
+			</button>
+
 			<button
 				type="button"
 				class="menu-item"
@@ -351,5 +485,8 @@
 	.menu-item:hover,
 	.menu-item.is-active {
 		opacity: 1;
+	}
+	:global(.ai-insertion) {
+		opacity: 0.6;
 	}
 </style>
